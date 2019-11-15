@@ -1,0 +1,177 @@
+---
+title: "data statistic"
+author: "Rheanna"
+date: "2019年11月13日"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE}
+library(plyr)
+library(ggplot2)
+library(reshape2)
+```
+
+```{r}
+setwd("D://doctor/R work directory/")
+```
+
+```{r}
+#读入数据,stringsAsFactors = F不让字符串转为因子
+setwd("D://doctor/R work directory/")
+vehicles <- read.csv(file="./vehicles.csv",stringsAsFactors = F)
+
+#labels <- read.table(file="./varlabels.txt",sep="-",header=FALSE)
+
+#因为读入报错，所以选择另一种读入方法
+#readLines()一行一行读取内容
+#strsplit按照-分割
+#do.call(rbind.y)将向量堆在一起，形成字符串矩阵
+labels <- do.call(rbind, strsplit(readLines("varlabels.txt"),"-"))
+```
+
+```{r}
+#因子是R中定性变量的称呼，可以被认为是对数据的标注或者标签。一般而言，因子是没有顺序的。
+```
+
+```{r}
+#对数据的初步感知
+
+#行数
+nrow(vehicles)
+
+#列数
+ncol(vehicles)
+
+#各列的名称
+names(vehicles)
+
+#数据集中包括几年的数据
+#unique是表示不重复的因子，length求向量长度
+length(unique(vehicles[,"year"]))
+length(unique(vehicles$year))
+
+#数据的起始年
+first_year <- min(vehicles[,"year"])
+
+last_year <- max(vehicles[,"year"])
+
+```
+
+```{r}
+#燃料类型
+table(vehicles$fuelType1)
+```
+```{r}
+#汽车使用的传动方式，填补缺省值
+vehicles$trany[vehicles$trany == ""] <- NA
+
+#生成新的变量，确认是否为手动还是自动
+vehicles$tray2 <- ifelse(substr(vehicles$trany,1,4) == "Auto","Auto","Manual")
+
+#将新变量转换为因子，用table函数来看不同组别的数量
+vehicles$trany2 <- as.factor(vehicles$tray2)
+table(vehicles$trany2)
+
+#table还可以用来计算交叉列联表，比如不同年份有没有增压充电器sCharger的数量
+#with可以将数据集导入，然后方便地直接用列名进行操作
+with(vehicles,table(sCharger, year))
+
+
+
+```
+
+```{r}
+#看起来相同的数据却有不同的数据类型
+class(vehicles$sCharger) #字符型变量
+unique(vehicles$sCharger)
+
+class(vehicles$tCharger) #逻辑型变量
+unique(vehicles$tCharger)
+
+
+```
+
+```{r}
+#MPG是否随时间有一个趋势的变化
+#利用ddply将数据集进行年份整合，然后计算每一年高速公路，城市以及combine的燃油效率
+mpgByYr <- ddply(vehicles, ~year, summarise, avgMPG = mean(comb08), avgHghy = mean(highway08), avgCity = mean(city08))
+
+#利用ggplot进行散点图绘制
+
+ggplot(mpgByYr, aes(year, avgMPG)) + geom_point() + geom_smooth() +xlab("Year") + ylab("Average MPG") + ggtitle("All cars")
+
+```
+
+```{r}
+#上图能展示出近年来汽车的燃油经济性有明显增长，然而混合动力和非燃油汽车的销量都在增加
+table(vehicles$fuelType1)
+
+#因此我们需要只看燃油汽车。使用subset生成新的数据框，只有fueltype1
+gasCars <- subset(vehicles, fuelType1 %in% c("Regular Gasoline", "Premium Gasoline", "Midgrade Gasoline") & fuelType2 == "" & atvType != "Hybrid")
+
+mpgByYr_Gas <- ddply(gasCars, ~year, summarise, avgMPG = mean(comb08))
+
+ggplot(mpgByYr_Gas, aes(year, avgMPG)) + geom_point() + geom_smooth() + xlab("Year") + ylab("Average MPG") + ggtitle("Gasoline cars")
+
+
+```
+
+```{r}
+#从图中可以看出，仅有燃油汽车的燃油经济性也在增加，那么原因是为什么呢。是否是因为大马力的车产量降低了。我们首先需要判断是否大功率的汽车燃油效率更低。 displ,表示引擎的排量。需要把它转换为数值型。
+
+typeof(gasCars$displ)
+gasCars$displ <- as.numeric(gasCars$displ)
+
+ggplot(gasCars, aes(displ, comb08)) +geom_point() +geom_smooth()
+
+```
+
+散点图的结果显示：引擎排量和燃油效率之间确实有负相关关系，小的车燃油效率会高。因此我们需要判断近年来是否小车生产量增加了，这样可能可以解释燃油效率问题。
+
+```{r}
+avgCarSize <- ddply(gasCars, ~year, summarise, avgDispl = mean(displ))
+#平均引擎排量
+ggplot(avgCarSize, aes(year, avgDispl)) + geom_point() + geom_smooth() + xlab("Year") + ylab("Average engine displacement (1)")
+```
+
+```{r}
+#绘制MPG燃油效率与排量之间的关系
+byYear <- ddply(gasCars, ~year, summarise, avgMPG = mean(comb08), avgDispl = mean(displ))
+
+#宽数据变为长数据
+byYears2 = melt(byYear, id = "year")
+levels(byYears2$variable) <- c("Average MPG", "Avg engine displacement")
+
+ggplot(byYears2, aes(year, value)) + geom_point() + geom_smooth() + facet_wrap(~variable, ncol = 1, scales = "free_y") + xlab("Year") + ylab("")
+
+
+```
+
+2008年以前，车排量增加，但是燃油效率保持一致，表示引擎效率一直在提升。但是08年引擎突然增加，而燃油效率却保持不变。
+
+```{r}
+#我们关注小排量的引擎，来看看是否自动挡或者手动挡比四缸发动油耗更高效。
+gasCars4 <- subset(gasCars, cylinders == "4")
+
+ggplot(gasCars4, aes(factor(year), comb08)) + geom_boxplot() + facet_wrap(~trany2, ncol = 1) + theme(axis.text.x = element_text(angle = 45)) +labs(x="Year", y = "MPG")
+#手动的燃油效率似乎是比自动高
+
+
+
+```
+
+```{r}
+#展示不同年份手动挡的车的占比
+ggplot(gasCars4, aes(factor(year), fill= factor(trany2))) + geom_bar(position="fill") +labs(x = "Year", y= "Proportion of cars", fill="Transmission") + theme(axis.text.x= element_text(angle = 45)) + geom_hline(yintercept = 0.5, linetype = 2 )
+
+
+
+```
+
+生产商和车型随时间的变化如何影响燃油效率。
+
+
